@@ -319,11 +319,11 @@ gitHubWebHookHandler queue WebhookPullRequestEvent ((), obj)
       liftIO $ atomically $
         writeTQueue queue (repo, sha)
 gitHubWebHookHandler queue WebhookPushEvent ((), obj) = do
-   let mcommit = A.parseMaybe (\o -> A.parseField o "head_commit" >>= flip A.parseField "id" . asObj) obj
-       mrepo = A.parseMaybe (\o -> A.parseField o "repository" >>= A.parseJSON . Object) obj
+   let mcommit = A.parse (\o -> A.parseField o "head_commit" >>= flip A.parseField "id" . asObj) obj
+       mrepo = A.parse (\o -> A.parseField o "repository" >>= A.parseJSON . Object) obj
    case (,) <$> mcommit <*> mrepo of
-     Nothing -> return ()
-     Just (commitSha, repo) -> liftIO . atomically $
+     A.Error str                 -> liftIO . putStrLn $ "Error: " ++ str
+     A.Success (commitSha, repo) -> liftIO . atomically $
        writeTQueue queue (repo, commitSha)
 
    where asObj obj = obj :: Object
