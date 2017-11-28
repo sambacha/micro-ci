@@ -16,7 +16,7 @@ import Control.Concurrent.STM.TQueue
 import Control.Exception (try)
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Aeson (FromJSON(..), withArray, eitherDecodeStrict)
+import Data.Aeson (FromJSON(..), Object, withArray, eitherDecodeStrict)
 import Data.Foldable
 import Data.List
 import Data.Maybe
@@ -46,7 +46,6 @@ data Job = Job
   , jobCommit :: Text.Text
   , jobAttr :: AttrPath
   }
-
 
 doJob :: Config -> Job -> IO ()
 doJob config job = do
@@ -111,12 +110,12 @@ buildAttribute config repo path = do
 
       _ ->
         fail $ unlines $
-        [ "Colud not find .drv from nix-instantiate ci.nix:"
+        [ "Could not find .drv from nix-instantiate ci.nix:"
         , ""
         , stdout
         , stderr
         ]
-  
+
   (exitCode, stdout, stderr) <-
     readCreateProcessWithExitCode
       (inGitRepository config repo
@@ -142,7 +141,6 @@ buildAttribute config repo path = do
     , buildDerivation = drv
     }
 
-    
 
 
 -- findJobAttrPaths
@@ -152,7 +150,7 @@ findJobAttrPaths :: Config -> Repo -> IO [AttrPath]
 findJobAttrPaths config repo = do
   jobsNixPath <-
     getDataFileName "jobs.nix"
-    
+
   (exitCode, jobs, stderr) <-
     readCreateProcessWithExitCode
       (inGitRepository config repo
@@ -185,13 +183,13 @@ findJobAttrPaths config repo = do
         , "I'm trying to parse:"
         , ""
         , jobs
-        ] 
+        ]
 
     Right paths ->
       return paths
 
 
-  
+
 -- repoDir
 
 
@@ -209,21 +207,21 @@ repoDir config repo =
 -- it is up-to-date.
 
 ensureRepository :: Config -> Repo -> IO ()
-ensureRepository cfg repo = do 
+ensureRepository cfg repo = do
   let
     dir =
       repoDir cfg repo
-  
+
   exists <-
     doesDirectoryExist dir
 
-  if exists then 
+  if exists then
     void $
       readCreateProcess
-        (inGitRepository cfg repo 
+        (inGitRepository cfg repo
            (proc "git" [ "fetch" ]))
         ""
-  else do 
+  else do
     URL cloneUrl <-
       maybe
         (fail (Text.unpack (untagName (repoName repo)) ++ " does not have a clone URL."))
@@ -238,13 +236,12 @@ checkoutRef :: Config -> Repo -> Text.Text -> IO ()
 checkoutRef config repo ref =
   void $
     readCreateProcess
-      (inGitRepository config repo 
+      (inGitRepository config repo
          (proc "git" [ "checkout", Text.unpack ref ]))
       ""
 
 
 -- inGitRepository
-
 
 inGitRepository :: Config -> Repo -> CreateProcess -> CreateProcess
 inGitRepository config repo a =
@@ -253,13 +250,17 @@ inGitRepository config repo a =
 
 
 -- HttpApi
-  
+
 
 type HttpApi =
   "github"
     :> "web-hook"
-    :> GitHubEvent '[ 'WebhookPullRequestEvent ]
-    :> GitHubSignedReqBody '[JSON] PullRequestEvent
+    :> GitHubEvent '[ 'WebhookPushEvent
+                    , 'WebhookCreateEvent
+                    , 'WebhookPullRequestEvent
+                    ]
+    :> GitHubSignedReqBody '[JSON]
+         (Either PullRequestEvent Object)
     :> Post '[JSON] ()
   :<|>
   Capture "drv" Text.Text
@@ -271,7 +272,7 @@ httpEndpoints q config =
   gitHubWebHookHandler q :<|> detailsHandler config
 
 
-  
+
 -- detailsHandler
 
 
@@ -290,7 +291,7 @@ detailsHandler config drvName = do
 
 
 -- AttrPath
-  
+
 
 -- | An attribute path.
 newtype AttrPath =
@@ -308,11 +309,14 @@ encodeAttrPath (AttrPath parts) =
 
 -- | Top-level GitHub web hook handler. Ensures that a build is scheduled.
 
-gitHubWebHookHandler :: TQueue PullRequestCommit -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
-gitHubWebHookHandler queue WebhookPullRequestEvent ((), ev) = do
+gitHubWebHookHandler :: TQueue PullRequestCommit -> RepoWebhookEvent -> ((), Either PullRequestEvent Object) -> Handler ()
+gitHubWebHookHandler queue WebhookPullRequestEvent ((), Left ev) = do
   liftIO $ atomically $
     writeTQueue queue (pullRequestHead $ pullRequestEventPullRequest ev)
-
+gitHubWebHookHandler queue WebhookPushEvent ((), Right obj) = do
+  liftIO (print obj)
+gitHubWebHookHandler queue WebhookCreateEvent ((), Right obj) = do
+  liftIO (print obj)
 gitHubWebHookHandler _ _ _ =
   return ()
 
@@ -354,7 +358,7 @@ main = do
   config <-
     LT.readFile "config.dhall"
       >>= Dhall.input Dhall.auto
-  
+
   jobQueue <-
     newTQueueIO
 
@@ -372,7 +376,7 @@ main = do
 
         Right job ->
           doJob config job
-  
+
   Warp.run 8080
     (serveWithContext
        (Proxy @HttpApi)
