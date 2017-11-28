@@ -267,7 +267,7 @@ type HttpApi =
     :> Get '[PlainText] Text.Text
 
 
-httpEndpoints :: TQueue PullRequestCommit -> Config -> Server HttpApi
+httpEndpoints :: TQueue (Repo, Text.Text) -> Config -> Server HttpApi
 httpEndpoints q config =
   gitHubWebHookHandler q :<|> detailsHandler config
 
@@ -309,10 +309,13 @@ encodeAttrPath (AttrPath parts) =
 
 -- | Top-level GitHub web hook handler. Ensures that a build is scheduled.
 
-gitHubWebHookHandler :: TQueue PullRequestCommit -> RepoWebhookEvent -> ((), Either PullRequestEvent Object) -> Handler ()
+gitHubWebHookHandler :: TQueue (Repo, Text.Text) -> RepoWebhookEvent -> ((), Either PullRequestEvent Object) -> Handler ()
 gitHubWebHookHandler queue WebhookPullRequestEvent ((), Left ev) = do
+  let prCommit = pullRequestHead (pullRequestEventPullRequest ev)
+      sha = pullRequestCommitSha prCommit
+      repo = pullRequestCommitRepo prCommit
   liftIO $ atomically $
-    writeTQueue queue (pullRequestHead $ pullRequestEventPullRequest ev)
+    writeTQueue queue (repo, sha)
 gitHubWebHookHandler queue WebhookPushEvent ((), Right obj) = do
   liftIO (print obj)
 gitHubWebHookHandler queue WebhookCreateEvent ((), Right obj) = do
@@ -322,29 +325,25 @@ gitHubWebHookHandler _ _ _ =
 
 
 
--- processPullRequest
+-- processCommit
 
 
-processPullRequest :: Config -> TQueue Job -> PullRequestCommit ->  IO ()
-processPullRequest config jobQueue pr = do
-  let
-    headRepo =
-      pullRequestCommitRepo pr
+processCommit :: Config -> TQueue Job -> (Repo, Text.Text) ->  IO ()
+processCommit config jobQueue (repo, commitsha) = do
+  ensureRepository config repo
 
-  ensureRepository config headRepo
-
-  checkoutRef config headRepo (pullRequestCommitSha pr)
+  checkoutRef config repo commitsha
 
   paths <-
-    findJobAttrPaths config headRepo
+    findJobAttrPaths config repo
 
   for_ paths $ \path ->
     atomically $
     writeTQueue
       jobQueue
       Job
-        { jobRepo = headRepo
-        , jobCommit = pullRequestCommitSha pr
+        { jobRepo = repo
+        , jobCommit = commitsha
         , jobAttr = path
         }
 
@@ -371,8 +370,8 @@ main = do
 
     --try $
     case job of
-        Left pr ->
-          processPullRequest config jobQueue pr
+        Left commitData ->
+          processCommit config jobQueue commitData
 
         Right job ->
           doJob config job
