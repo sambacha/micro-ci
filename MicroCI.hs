@@ -17,7 +17,7 @@ import Control.Exception (try)
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson (FromJSON(..), fromJSON, Value(..), Object, withArray, eitherDecodeStrict)
-import qualified Data.Aeson as A
+import qualified Data.Aeson.Types as A
 import Data.Foldable
 import Data.List
 import Data.Maybe
@@ -319,11 +319,15 @@ gitHubWebHookHandler queue WebhookPullRequestEvent ((), obj)
       liftIO $ atomically $
         writeTQueue queue (repo, sha)
 gitHubWebHookHandler queue WebhookPushEvent ((), obj) = do
-  liftIO (print obj)
-gitHubWebHookHandler queue WebhookCreateEvent ((), obj) = do
-  liftIO (print obj)
-gitHubWebHookHandler _ _ _ =
-  return ()
+   let mcommit = A.parseMaybe (\o -> A.parseField o "headCommit" >>= flip A.parseField "id" . asObj) obj
+       mrepo = A.parseMaybe (\o -> A.parseField o "repository" >>= A.parseJSON . Object) obj
+   case (,) <$> mcommit <*> mrepo of
+     Nothing -> return ()
+     Just (commitSha, repo) -> liftIO . atomically $
+       writeTQueue queue (repo, commitSha)
+
+   where asObj obj = obj :: Object
+gitHubWebHookHandler _ _ _ = return ()
 
 
 
