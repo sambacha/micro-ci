@@ -255,7 +255,8 @@ inGitRepository config repo a =
 type HttpApi =
   "github"
     :> "web-hook"
-    :> GitHubEvent '[ 'WebhookPushEvent
+    :> GitHubEvent '[ 'WebhookPingEvent
+                    , 'WebhookPushEvent
                     , 'WebhookCreateEvent
                     , 'WebhookPullRequestEvent
                     ]
