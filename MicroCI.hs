@@ -43,26 +43,26 @@ import qualified System.Process as Process
 -- Job
 
 data Job = Job
-  { jobRepo :: Repo
+  { jobRepoOwner :: Text.Text
+  , jobRepoProject :: Text.Text
   , jobCommit :: Text.Text
   , jobAttr :: AttrPath
   }
 
 doJob :: Config -> Job -> IO ()
 doJob config job = do
-  ensureRepository config (jobRepo job)
+  ensureRepository config (jobRepoOwner job) (jobRepoProject job)
 
-  checkoutRef config (jobRepo job) (jobCommit job)
+  checkoutRef config (jobRepoOwner job) (jobRepoProject job) (jobCommit job)
 
   buildRes <-
-    buildAttribute config (jobRepo job) (jobAttr job)
+    buildAttribute config (jobRepoOwner job) (jobRepoProject job) (jobAttr job)
 
   createStatus
     (OAuth (fromString $ LT.unpack $ Config.oauth config))
-    (simpleOwnerLogin $ repoOwner (jobRepo job))
-    (repoName (jobRepo job))
-    (mkName (Proxy @Commit)
-            (jobCommit job))
+    (mkName (Proxy @Owner)  (jobRepoOwner job))
+    (mkName (Proxy @Repo)   (jobRepoProject job))
+    (mkName (Proxy @Commit) (jobCommit job))
     NewStatus { newStatusState =
                   if buildSuccess buildRes then
                     Success
@@ -92,11 +92,11 @@ data BuildResult = BuildResult
   }
 
 
-buildAttribute :: Config -> Repo -> AttrPath -> IO BuildResult
-buildAttribute config repo path = do
+buildAttribute :: Config -> Text.Text -> Text.Text -> AttrPath -> IO BuildResult
+buildAttribute config owner project path = do
   (exitCode, stdout, stderr) <-
     readCreateProcessWithExitCode
-      (inGitRepository config repo
+      (inGitRepository config owner project
          (Process.proc "nix-instantiate"
             ["ci.nix"
             , "-A"
@@ -119,7 +119,7 @@ buildAttribute config repo path = do
 
   (exitCode, stdout, stderr) <-
     readCreateProcessWithExitCode
-      (inGitRepository config repo
+      (inGitRepository config owner project
          (Process.proc "nix-store" [ "--realise", drv ]))
       ""
 
@@ -147,14 +147,14 @@ buildAttribute config repo path = do
 -- findJobAttrPaths
 
 
-findJobAttrPaths :: Config -> Repo -> IO [AttrPath]
-findJobAttrPaths config repo = do
+findJobAttrPaths :: Config -> Text.Text -> Text.Text -> IO [AttrPath]
+findJobAttrPaths config owner project = do
   jobsNixPath <-
     getDataFileName "jobs.nix"
 
   (exitCode, jobs, stderr) <-
     readCreateProcessWithExitCode
-      (inGitRepository config repo
+      (inGitRepository config owner project
          (Process.proc
             "nix-instantiate"
             [ "--eval"
@@ -194,11 +194,11 @@ findJobAttrPaths config repo = do
 -- repoDir
 
 
-repoDir :: Config -> Repo -> FilePath
-repoDir config repo =
+repoDir :: Config -> Text.Text -> Text.Text -> FilePath
+repoDir config owner project =
   LT.unpack (Config.repoRoot config)
-    </> Text.unpack (untagName (simpleOwnerLogin (repoOwner repo)))
-    </> Text.unpack (untagName (repoName repo))
+    </> Text.unpack owner
+    </> Text.unpack project
 
 
 
@@ -207,11 +207,11 @@ repoDir config repo =
 -- | Ensure that a repository has been cloned into the repoRoot directory, and that
 -- it is up-to-date.
 
-ensureRepository :: Config -> Repo -> IO ()
-ensureRepository cfg repo = do
+ensureRepository :: Config -> Text.Text -> Text.Text -> IO ()
+ensureRepository cfg owner project = do
   let
     dir =
-      repoDir cfg repo
+      repoDir cfg owner project
 
   exists <-
     doesDirectoryExist dir
@@ -219,34 +219,29 @@ ensureRepository cfg repo = do
   if exists then
     void $
       readCreateProcess
-        (inGitRepository cfg repo
+        (inGitRepository cfg owner project
            (proc "git" [ "fetch" ]))
         ""
   else do
-    URL cloneUrl <-
-      maybe
-        (fail (Text.unpack (untagName (repoName repo)) ++ " does not have a clone URL."))
-        return
-        (repoCloneUrl repo)
-
+    let cloneUrl = "https://github.com/" <> owner <> "/" <> project <> ".git"
     void $ readCreateProcess (proc "git" [ "clone", Text.unpack cloneUrl, dir ]) ""
 
 
 
-checkoutRef :: Config -> Repo -> Text.Text -> IO ()
-checkoutRef config repo ref =
+checkoutRef :: Config -> Text.Text -> Text.Text -> Text.Text -> IO ()
+checkoutRef config owner project ref =
   void $
     readCreateProcess
-      (inGitRepository config repo
+      (inGitRepository config owner project
          (proc "git" [ "checkout", Text.unpack ref ]))
       ""
 
 
 -- inGitRepository
 
-inGitRepository :: Config -> Repo -> CreateProcess -> CreateProcess
-inGitRepository config repo a =
-  a { cwd = Just (repoDir config repo) }
+inGitRepository :: Config -> Text.Text -> Text.Text -> CreateProcess -> CreateProcess
+inGitRepository config owner project a =
+  a { cwd = Just (repoDir config owner project) }
 
 
 
@@ -268,7 +263,7 @@ type HttpApi =
     :> Get '[PlainText] Text.Text
 
 
-httpEndpoints :: TQueue (Repo, Text.Text) -> Config -> Server HttpApi
+httpEndpoints :: TQueue (Text.Text, Text.Text, Text.Text) -> Config -> Server HttpApi
 httpEndpoints q config =
   gitHubWebHookHandler q :<|> detailsHandler config
 
@@ -310,23 +305,29 @@ encodeAttrPath (AttrPath parts) =
 
 -- | Top-level GitHub web hook handler. Ensures that a build is scheduled.
 
-gitHubWebHookHandler :: TQueue (Repo, Text.Text) -> RepoWebhookEvent -> ((), Object) -> Handler ()
+gitHubWebHookHandler :: TQueue (Text.Text, Text.Text, Text.Text) -> RepoWebhookEvent -> ((), Object) -> Handler ()
 gitHubWebHookHandler queue WebhookPullRequestEvent ((), obj)
   | A.Success ev <- fromJSON (Object obj) = do
       let prCommit = pullRequestHead (pullRequestEventPullRequest ev)
           sha = pullRequestCommitSha prCommit
           repo = pullRequestCommitRepo prCommit
       liftIO $ atomically $
-        writeTQueue queue (repo, sha)
+        writeTQueue queue
+          ( untagName $ simpleOwnerLogin (repoOwner repo)
+          , untagName $ repoName repo
+          , sha
+          )
 gitHubWebHookHandler queue WebhookPushEvent ((), obj) = do
-   let mcommit = A.parse (\o -> A.parseField o "head_commit" >>= flip A.parseField "id" . asObj) obj
-       mrepo = A.parse (\o -> A.parseField o "repository" >>= A.parseJSON . Object) obj
+   let mcommit = A.parse (flip A.parseField "head_commit" >=> flip A.parseField "id" . asObj) obj
+       mrepo = A.parse (flip A.parseField "repository" >=> parseRepo) obj
    case (,) <$> mcommit <*> mrepo of
      A.Error str                 -> liftIO . putStrLn $ "Error: " ++ str
-     A.Success (commitSha, repo) -> liftIO . atomically $
-       writeTQueue queue (repo, commitSha)
+     A.Success (commitSha, (owner, project)) -> liftIO . atomically $
+       writeTQueue queue (owner, project, commitSha)
 
    where asObj obj = obj :: Object
+         parseRepo o = (,) <$> (flip A.parseField "owner" >=> flip A.parseField "name" . asObj) o
+                           <*> flip A.parseField "name" o
 gitHubWebHookHandler _ _ _ = return ()
 
 
@@ -334,20 +335,21 @@ gitHubWebHookHandler _ _ _ = return ()
 -- processCommit
 
 
-processCommit :: Config -> TQueue Job -> (Repo, Text.Text) ->  IO ()
-processCommit config jobQueue (repo, commitsha) = do
-  ensureRepository config repo
+processCommit :: Config -> TQueue Job -> (Text.Text, Text.Text, Text.Text) ->  IO ()
+processCommit config jobQueue (owner, project, commitsha) = do
+  ensureRepository config owner project
 
-  checkoutRef config repo commitsha
+  checkoutRef config owner project commitsha
 
-  paths <- findJobAttrPaths config repo
+  paths <- findJobAttrPaths config owner project
 
   for_ paths $ \path ->
     atomically $
     writeTQueue
       jobQueue
       Job
-        { jobRepo = repo
+        { jobRepoOwner = owner
+        , jobRepoProject = project
         , jobCommit = commitsha
         , jobAttr = path
         }
