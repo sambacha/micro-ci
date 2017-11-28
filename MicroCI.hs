@@ -16,7 +16,8 @@ import Control.Concurrent.STM.TQueue
 import Control.Exception (try)
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Aeson (FromJSON(..), Object, withArray, eitherDecodeStrict)
+import Data.Aeson (FromJSON(..), fromJSON, Value(..), Object, withArray, eitherDecodeStrict)
+import qualified Data.Aeson as A
 import Data.Foldable
 import Data.List
 import Data.Maybe
@@ -260,8 +261,7 @@ type HttpApi =
                     , 'WebhookCreateEvent
                     , 'WebhookPullRequestEvent
                     ]
-    :> GitHubSignedReqBody '[JSON]
-         (Either PullRequestEvent Object)
+    :> GitHubSignedReqBody '[JSON] Object
     :> Post '[JSON] ()
   :<|>
   Capture "drv" Text.Text
@@ -310,16 +310,17 @@ encodeAttrPath (AttrPath parts) =
 
 -- | Top-level GitHub web hook handler. Ensures that a build is scheduled.
 
-gitHubWebHookHandler :: TQueue (Repo, Text.Text) -> RepoWebhookEvent -> ((), Either PullRequestEvent Object) -> Handler ()
-gitHubWebHookHandler queue WebhookPullRequestEvent ((), Left ev) = do
-  let prCommit = pullRequestHead (pullRequestEventPullRequest ev)
-      sha = pullRequestCommitSha prCommit
-      repo = pullRequestCommitRepo prCommit
-  liftIO $ atomically $
-    writeTQueue queue (repo, sha)
-gitHubWebHookHandler queue WebhookPushEvent ((), Right obj) = do
+gitHubWebHookHandler :: TQueue (Repo, Text.Text) -> RepoWebhookEvent -> ((), Object) -> Handler ()
+gitHubWebHookHandler queue WebhookPullRequestEvent ((), obj)
+  | A.Success ev <- fromJSON (Object obj) = do
+      let prCommit = pullRequestHead (pullRequestEventPullRequest ev)
+          sha = pullRequestCommitSha prCommit
+          repo = pullRequestCommitRepo prCommit
+      liftIO $ atomically $
+        writeTQueue queue (repo, sha)
+gitHubWebHookHandler queue WebhookPushEvent ((), obj) = do
   liftIO (print obj)
-gitHubWebHookHandler queue WebhookCreateEvent ((), Right obj) = do
+gitHubWebHookHandler queue WebhookCreateEvent ((), obj) = do
   liftIO (print obj)
 gitHubWebHookHandler _ _ _ =
   return ()
@@ -335,8 +336,7 @@ processCommit config jobQueue (repo, commitsha) = do
 
   checkoutRef config repo commitsha
 
-  paths <-
-    findJobAttrPaths config repo
+  paths <- findJobAttrPaths config repo
 
   for_ paths $ \path ->
     atomically $
