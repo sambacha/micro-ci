@@ -32,6 +32,7 @@ import Servant
 import Servant.GitHub.Webhook
 import Servant.Server
 import System.Directory
+import System.Environment
 import System.Exit
 import System.FilePath
 import System.Process
@@ -350,8 +351,9 @@ processPullRequest config jobQueue pr = do
 
 main :: IO ()
 main = do
+  (configFilePath:_) <- getArgs
   config <-
-    Text.readFile "config.dhall"
+    Text.readFile configFilePath
       >>= Dhall.input Dhall.auto
   
   jobQueue <-
