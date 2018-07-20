@@ -23,8 +23,7 @@ import Data.Maybe
 import Data.Monoid
 import Data.String
 import qualified Data.Text as Text
-import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.IO as LT
+import qualified Data.Text.IO as Text
 import qualified Dhall
 import GitHub.Data
 import GitHub.Endpoints.Repos.Status
@@ -58,7 +57,7 @@ doJob config job = do
     buildAttribute config (jobRepo job) (jobAttr job)
 
   createStatus
-    (OAuth (fromString $ LT.unpack $ Config.oauth config))
+    (OAuth (fromString $ Text.unpack $ Config.oauth config))
     (simpleOwnerLogin $ repoOwner (jobRepo job))
     (repoName (jobRepo job))
     (mkName (Proxy @Commit)
@@ -70,7 +69,7 @@ doJob config job = do
                     Failure
               , newStatusTargetUrl =
                   Just $ URL $ Text.pack $
-                  LT.unpack (Config.httpRoot config) ++ "/" ++ takeFileName (buildDerivation buildRes)
+                  Text.unpack (Config.httpRoot config) ++ "/" ++ takeFileName (buildDerivation buildRes)
               , newStatusDescription =
                   Just $
                   if buildSuccess buildRes then
@@ -125,11 +124,11 @@ buildAttribute config repo path = do
 
   createDirectoryIfMissing
     True
-    (LT.unpack $ Config.logs config)
+    (Text.unpack $ Config.logs config)
 
-  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
+  writeFile (Text.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
 
-  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
+  writeFile (Text.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
 
   return BuildResult
     { buildSuccess =
@@ -197,7 +196,7 @@ findJobAttrPaths config repo = do
 
 repoDir :: Config -> Repo -> FilePath
 repoDir config repo =
-  LT.unpack (Config.repoRoot config)
+  Text.unpack (Config.repoRoot config)
     </> Text.unpack (untagName (simpleOwnerLogin (repoOwner repo)))
     </> Text.unpack (untagName (repoName repo))
 
@@ -279,11 +278,11 @@ detailsHandler :: Config-> Text.Text -> Handler Text.Text
 detailsHandler config drvName = do
   stdout <-
     liftIO
-      $ readFile (LT.unpack (Config.logs config) </> Text.unpack drvName <.> "stdout")
+      $ readFile (Text.unpack (Config.logs config) </> Text.unpack drvName <.> "stdout")
 
   stderr <-
     liftIO
-      $ readFile (LT.unpack (Config.logs config) </> Text.unpack drvName <.> "stderr")
+      $ readFile (Text.unpack (Config.logs config) </> Text.unpack drvName <.> "stderr")
 
   return (Text.pack $ unlines [ stdout, "", stderr ])
 
@@ -352,7 +351,7 @@ processPullRequest config jobQueue pr = do
 main :: IO ()
 main = do
   config <-
-    LT.readFile "config.dhall"
+    Text.readFile "config.dhall"
       >>= Dhall.input Dhall.auto
   
   jobQueue <-
@@ -376,5 +375,5 @@ main = do
   Warp.run 8080
     (serveWithContext
        (Proxy @HttpApi)
-       (gitHubKey (return (fromString $ LT.unpack $ Config.secret config)) :. EmptyContext)
+       (gitHubKey (return (fromString $ Text.unpack $ Config.secret config)) :. EmptyContext)
        (httpEndpoints prQueue config))
