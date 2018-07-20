@@ -26,7 +26,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Dhall
 import GitHub.Data
-import GitHub.Endpoints.Repos.Status
+import GitHub.Endpoints.Repos.Statuses
 import Network.Wai.Handler.Warp as Warp
 import Servant
 import Servant.GitHub.Webhook
@@ -64,9 +64,9 @@ doJob config job = do
             (jobCommit job))
     NewStatus { newStatusState =
                   if buildSuccess buildRes then
-                    Success
+                    StatusSuccess
                   else
-                    Failure
+                    StatusFailure
               , newStatusTargetUrl =
                   Just $ URL $ Text.pack $
                   Text.unpack (Config.httpRoot config) ++ "/" ++ takeFileName (buildDerivation buildRes)
@@ -77,7 +77,7 @@ doJob config job = do
                   else
                     "nix-build failed"
               , newStatusContext =
-                  "ci.nix: " <> fromString (encodeAttrPath (jobAttr job))
+                  Just ("ci.nix: " <> fromString (encodeAttrPath (jobAttr job)))
               }
 
   return ()
@@ -323,8 +323,8 @@ gitHubWebHookHandler _ _ _ =
 processPullRequest :: Config -> TQueue Job -> PullRequestCommit ->  IO ()
 processPullRequest config jobQueue pr = do
   let
-    headRepo =
-      pullRequestCommitRepo pr
+    headRepo = fromMaybe (error "impossible")
+             $ pullRequestCommitRepo pr
 
   ensureRepository config headRepo
 
@@ -371,9 +371,10 @@ main = do
 
         Right job ->
           doJob config job
+
+  let serverContext :: Dhall.Text -> Context '[GitHubKey PullRequestEvent]
+      serverContext secret = gitHubKey (return $ fromString $ Text.unpack $ secret) :. EmptyContext
   
   Warp.run 8080
     (serveWithContext
-       (Proxy @HttpApi)
-       (gitHubKey (return (fromString $ Text.unpack $ Config.secret config)) :. EmptyContext)
-       (httpEndpoints prQueue config))
+       (Proxy @HttpApi) (serverContext $ Config.secret config) (httpEndpoints prQueue config))
