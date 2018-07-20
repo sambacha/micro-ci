@@ -1,4 +1,7 @@
-with (import <nixpkgs> {});
+{ pkgs ? import <nixpkgs> {}
+}:
+
+with pkgs;
 {
-  micro-ci = (haskellPackages.override (import ./haskell-overrides.nix (import <nixpkgs> {}))).callPackage ./default.nix {};
+  micro-ci = (haskellPackages.override (import ./haskell-overrides.nix pkgs)).callPackage ./default.nix {};
 }
