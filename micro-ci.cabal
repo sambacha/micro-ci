@@ -21,7 +21,7 @@ executable micro-ci
   autogen-modules: Paths_micro_ci
   other-modules: Paths_micro_ci
   other-extensions:    DataKinds, TypeApplications
-  build-depends:       base, servant-server, servant-github-webhook, warp >=3.2 && <3.3, aeson, github, process, directory, text, filepath, dhall, stm
+  build-depends:       base, servant-server, servant-github-webhook, warp >=3.2 && <3.3, aeson, github, process, directory, bytestring, text, filepath, dhall, stm
   -- hs-source-dirs:      
   ghc-options: -fprint-potential-instances
   default-language:    Haskell2010

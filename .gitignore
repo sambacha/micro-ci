@@ -4,4 +4,5 @@
 config.dhall
 Setup
 dist/
+**/result
 repositories/

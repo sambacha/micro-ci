@@ -1,8 +1,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
@@ -22,6 +28,7 @@ import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.String
+import Data.ByteString (ByteString)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Dhall
@@ -30,6 +37,11 @@ import GitHub.Endpoints.Repos.Status
 import Network.Wai.Handler.Warp as Warp
 import Servant
 import Servant.GitHub.Webhook
+
+-- To fix the "overlapping instances of servant HasContextEntry",
+-- do not import `gitHubKey` and `GitHubKey` unqualified
+import qualified Servant.GitHub.Webhook (GitHubKey, gitHubKey)
+
 import Servant.Server
 import System.Directory
 import System.Exit
@@ -37,6 +49,17 @@ import System.FilePath
 import System.Process
 import qualified System.Process as Process
 
+
+-- To fix the "overlapping instances of servant HasContextEntry",
+
+-- HACK
+newtype MyGitHubKey = MyGitHubKey (forall result. Servant.GitHub.Webhook.GitHubKey result)
+
+myGitHubKey :: IO ByteString -> MyGitHubKey
+myGitHubKey k = MyGitHubKey (Servant.GitHub.Webhook.gitHubKey k)
+
+instance HasContextEntry '[MyGitHubKey] (Servant.GitHub.Webhook.GitHubKey result) where
+    getContextEntry (MyGitHubKey x :. _) = x
 
 -- Job
 
@@ -374,5 +397,5 @@ main = do
   Warp.run 8080
     (serveWithContext
        (Proxy @HttpApi)
-       (gitHubKey (return (fromString $ Text.unpack $ Config.secret config)) :. EmptyContext)
+       (myGitHubKey (return (fromString $ Text.unpack $ Config.secret config)) :. EmptyContext)
        (httpEndpoints prQueue config))
