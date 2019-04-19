@@ -10,7 +10,14 @@ pkgs:
           rev = "8312ba0b2a90823a2548cab4f112726933f8072a";
           sha256 = "1k02hpls2cwrhp534w193g1ffzlsk3dlv42w3m6nf9x9xbnfvam4";
         };
+	buildDepends = (super.github.buildDepends or []) ++ [super.cryptohash super.aeson-compat super.aeson-extra];
         jailbreak = true;
       });
+
+     time-parsers = pkgs.haskell.lib.overrideCabal super.time-parsers (drv: {
+	doCheck = false;
+        jailbreak = true;
+      });
+
     }; 
 }
