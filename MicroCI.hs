@@ -1,50 +1,52 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeOperators              #-}
 
 module Main where
 
-import Paths_micro_ci
+import           Config                          (Config)
 import qualified Config
-import Config (Config)
-import Control.Applicative
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Concurrent.STM.TQueue
-import Control.Exception (try)
-import Control.Monad
-import Control.Monad.IO.Class
-import Data.Aeson (FromJSON(..), withArray, eitherDecodeStrict)
-import Data.Foldable
-import Data.List
-import Data.Maybe
-import Data.Monoid
-import Data.String
-import qualified Data.Text as Text
-import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.IO as LT
-import qualified Dhall
-import GitHub.Data
-import GitHub.Endpoints.Repos.Status
-import Network.Wai.Handler.Warp as Warp
-import Servant
-import Servant.GitHub.Webhook
-import Servant.Server
-import System.Directory
-import System.Exit
-import System.FilePath
-import System.Process
-import qualified System.Process as Process
+import           Control.Applicative
+import           Control.Concurrent
+import           Control.Concurrent.STM
+import           Control.Concurrent.STM.TQueue
+import           Control.Exception               (try)
+import           Control.Monad
+import           Control.Monad.IO.Class
+import           Data.Aeson                      (FromJSON (..), Object, Value,
+                                                  decodeFileStrict,
+                                                  eitherDecodeStrict, withArray)
+import           Data.Foldable
+import           Data.List
+import           Data.Maybe
+import           Data.Monoid
+import           Data.String
+import qualified Data.Text                       as Text
+import           Data.Text.Encoding              (encodeUtf8)
+import qualified Data.Text.Lazy                  as LT
+import qualified Data.Text.Lazy.IO               as LT
+import           GitHub.Data
+import           GitHub.Endpoints.Repos.Statuses
+import           Network.Wai.Handler.Warp        as Warp
+import           Paths_micro_ci
+import           Servant
+import           Servant.GitHub.Webhook
+import           Servant.Server
+import           System.Directory
+import           System.Exit
+import           System.FilePath
+import           System.Process
+import qualified System.Process                  as Process
 
 
 -- Job
 
 data Job = Job
-  { jobRepo :: Repo
+  { jobRepo   :: Repo
   , jobCommit :: Text.Text
-  , jobAttr :: AttrPath
+  , jobAttr   :: AttrPath
   }
 
 
@@ -58,26 +60,26 @@ doJob config job = do
     buildAttribute config (jobRepo job) (jobAttr job)
 
   createStatus
-    (OAuth (fromString $ LT.unpack $ Config.oauth config))
+    (OAuth (fromString $ Text.unpack $ Config.oauth config))
     (simpleOwnerLogin $ repoOwner (jobRepo job))
     (repoName (jobRepo job))
     (mkName (Proxy @Commit)
             (jobCommit job))
     NewStatus { newStatusState =
                   if buildSuccess buildRes then
-                    Success
+                    StatusSuccess
                   else
-                    Failure
+                    StatusFailure
               , newStatusTargetUrl =
                   Just $ URL $ Text.pack $
-                  LT.unpack (Config.httpRoot config) ++ "/" ++ takeFileName (buildDerivation buildRes)
+                  Text.unpack (Config.httpRoot config) ++ "/" ++ takeFileName (buildDerivation buildRes)
               , newStatusDescription =
                   Just $
                   if buildSuccess buildRes then
                     "nix-build successful"
                   else
                     "nix-build failed"
-              , newStatusContext =
+              , newStatusContext = Just $
                   "ci.nix: " <> fromString (encodeAttrPath (jobAttr job))
               }
 
@@ -87,7 +89,7 @@ doJob config job = do
 -- buildAttribute
 
 data BuildResult = BuildResult
-  { buildSuccess :: Bool
+  { buildSuccess    :: Bool
   , buildDerivation :: String
   }
 
@@ -116,7 +118,7 @@ buildAttribute config repo path = do
         , stdout
         , stderr
         ]
-  
+
   (exitCode, stdout, stderr) <-
     readCreateProcessWithExitCode
       (inGitRepository config repo
@@ -125,11 +127,11 @@ buildAttribute config repo path = do
 
   createDirectoryIfMissing
     True
-    (LT.unpack $ Config.logs config)
+    (Text.unpack $ Config.logs config)
 
-  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
+  writeFile (Text.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
 
-  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
+  writeFile (Text.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
 
   return BuildResult
     { buildSuccess =
@@ -142,7 +144,7 @@ buildAttribute config repo path = do
     , buildDerivation = drv
     }
 
-    
+
 
 
 -- findJobAttrPaths
@@ -152,7 +154,7 @@ findJobAttrPaths :: Config -> Repo -> IO [AttrPath]
 findJobAttrPaths config repo = do
   jobsNixPath <-
     getDataFileName "jobs.nix"
-    
+
   (exitCode, jobs, stderr) <-
     readCreateProcessWithExitCode
       (inGitRepository config repo
@@ -185,19 +187,19 @@ findJobAttrPaths config repo = do
         , "I'm trying to parse:"
         , ""
         , jobs
-        ] 
+        ]
 
     Right paths ->
       return paths
 
 
-  
+
 -- repoDir
 
 
 repoDir :: Config -> Repo -> FilePath
 repoDir config repo =
-  LT.unpack (Config.repoRoot config)
+  Text.unpack (Config.repoRoot config)
     </> Text.unpack (untagName (simpleOwnerLogin (repoOwner repo)))
     </> Text.unpack (untagName (repoName repo))
 
@@ -209,21 +211,21 @@ repoDir config repo =
 -- it is up-to-date.
 
 ensureRepository :: Config -> Repo -> IO ()
-ensureRepository cfg repo = do 
+ensureRepository cfg repo = do
   let
     dir =
       repoDir cfg repo
-  
+
   exists <-
     doesDirectoryExist dir
 
-  if exists then 
+  if exists then
     void $
       readCreateProcess
-        (inGitRepository cfg repo 
+        (inGitRepository cfg repo
            (proc "git" [ "fetch" ]))
         ""
-  else do 
+  else do
     URL cloneUrl <-
       maybe
         (fail (Text.unpack (untagName (repoName repo)) ++ " does not have a clone URL."))
@@ -238,7 +240,7 @@ checkoutRef :: Config -> Repo -> Text.Text -> IO ()
 checkoutRef config repo ref =
   void $
     readCreateProcess
-      (inGitRepository config repo 
+      (inGitRepository config repo
          (proc "git" [ "checkout", Text.unpack ref ]))
       ""
 
@@ -253,13 +255,13 @@ inGitRepository config repo a =
 
 
 -- HttpApi
-  
+
 
 type HttpApi =
   "github"
     :> "web-hook"
     :> GitHubEvent '[ 'WebhookPullRequestEvent ]
-    :> GitHubSignedReqBody '[JSON] PullRequestEvent
+    :> GitHubSignedReqBody '[JSON] (EventWithHookRepo PullRequestEvent)
     :> Post '[JSON] ()
   :<|>
   Capture "drv" Text.Text
@@ -271,7 +273,7 @@ httpEndpoints q config =
   gitHubWebHookHandler q :<|> detailsHandler config
 
 
-  
+
 -- detailsHandler
 
 
@@ -279,18 +281,18 @@ detailsHandler :: Config-> Text.Text -> Handler Text.Text
 detailsHandler config drvName = do
   stdout <-
     liftIO
-      $ readFile (LT.unpack (Config.logs config) </> Text.unpack drvName <.> "stdout")
+      $ readFile ((Text.unpack $ Config.logs config) </> Text.unpack drvName <.> "stdout")
 
   stderr <-
     liftIO
-      $ readFile (LT.unpack (Config.logs config) </> Text.unpack drvName <.> "stderr")
+      $ readFile ((Text.unpack $ Config.logs config) </> Text.unpack drvName <.> "stderr")
 
   return (Text.pack $ unlines [ stdout, "", stderr ])
 
 
 
 -- AttrPath
-  
+
 
 -- | An attribute path.
 newtype AttrPath =
@@ -308,8 +310,8 @@ encodeAttrPath (AttrPath parts) =
 
 -- | Top-level GitHub web hook handler. Ensures that a build is scheduled.
 
-gitHubWebHookHandler :: TQueue PullRequestCommit -> RepoWebhookEvent -> ((), PullRequestEvent) -> Handler ()
-gitHubWebHookHandler queue WebhookPullRequestEvent ((), ev) = do
+gitHubWebHookHandler :: TQueue PullRequestCommit -> RepoWebhookEvent -> ((), EventWithHookRepo PullRequestEvent) -> Handler ()
+gitHubWebHookHandler queue WebhookPullRequestEvent ((), EventWithHookRepo ev) = do
   liftIO $ atomically $
     writeTQueue queue (pullRequestHead $ pullRequestEventPullRequest ev)
 
@@ -323,9 +325,9 @@ gitHubWebHookHandler _ _ _ =
 
 processPullRequest :: Config -> TQueue Job -> PullRequestCommit ->  IO ()
 processPullRequest config jobQueue pr = do
-  let
-    headRepo =
-      pullRequestCommitRepo pr
+  headRepo <- case pullRequestCommitRepo pr of
+    Nothing -> error "no head repo"
+    Just v  -> pure v
 
   ensureRepository config headRepo
 
@@ -351,10 +353,10 @@ processPullRequest config jobQueue pr = do
 
 main :: IO ()
 main = do
-  config <-
-    LT.readFile "config.dhall"
-      >>= Dhall.input Dhall.auto
-  
+  config <- decodeFileStrict "config.json" >>= \x -> case x of
+    Nothing -> error "decode error"
+    Just v  -> return v
+
   jobQueue <-
     newTQueueIO
 
@@ -372,9 +374,12 @@ main = do
 
         Right job ->
           doJob config job
-  
+
+  let key :: GitHubKey (EventWithHookRepo PullRequestEvent)
+      key = gitHubKey (return (encodeUtf8 $ Config.secret config))
+
   Warp.run 8080
     (serveWithContext
        (Proxy @HttpApi)
-       (gitHubKey (return (fromString $ LT.unpack $ Config.secret config)) :. EmptyContext)
+       (key :. EmptyContext)
        (httpEndpoints prQueue config))
