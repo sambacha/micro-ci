@@ -8,7 +8,7 @@ let
                        then pkgs.haskellPackages
                        else pkgs.haskell.packages.${compiler};
 
-  drv = (haskellPackages.override (import ./haskell-overrides.nix pkgs)).callPackage ./default.nix {};
+  drv = pkgs.haskellPackages.callPackage ./default.nix { };
 
 in
 

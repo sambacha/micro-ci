@@ -1,17 +1,18 @@
-{-# language DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Config where
 
-import System.FilePath
-import Dhall
-import GHC.Generics (Generic)
+import           Data.Aeson
+import           Data.Text
+import           GHC.Generics    (Generic)
+import           System.FilePath
 
 data Config = Config
   { repoRoot :: !Text
-  , secret :: !Text
-  , oauth :: !Text
-  , logs :: !Text
+  , secret   :: !Text
+  , oauth    :: !Text
+  , logs     :: !Text
   , httpRoot :: !Text
   } deriving (Generic)
 
-instance Interpret Config
+instance FromJSON Config
