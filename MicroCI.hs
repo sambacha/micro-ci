@@ -41,6 +41,17 @@ import           System.Process
 import qualified System.Process                  as Process
 
 
+-- To fix the "overlapping instances of servant HasContextEntry",
+
+-- HACK
+newtype MyGitHubKey = MyGitHubKey (forall result. Servant.GitHub.Webhook.GitHubKey result)
+
+myGitHubKey :: IO ByteString -> MyGitHubKey
+myGitHubKey k = MyGitHubKey (Servant.GitHub.Webhook.gitHubKey k)
+
+instance HasContextEntry '[MyGitHubKey] (Servant.GitHub.Webhook.GitHubKey result) where
+    getContextEntry (MyGitHubKey x :. _) = x
+
 -- Job
 
 data Job = Job
@@ -266,7 +277,6 @@ type HttpApi =
   :<|>
   Capture "drv" Text.Text
     :> Get '[PlainText] Text.Text
-
 
 httpEndpoints :: TQueue PullRequestCommit -> Config -> Server HttpApi
 httpEndpoints q config =
