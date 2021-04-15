@@ -6,3 +6,10 @@ Setup
 dist/
 **/result
 repositories/
+.DS_Store
+node_modules
+*.tgz
+*.log
+*.tar.gz
+*.zip
+.cache
